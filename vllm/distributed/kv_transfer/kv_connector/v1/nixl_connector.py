@@ -212,7 +212,7 @@ class NixlConnector(KVConnectorBase_V1):
         assert self.connector_worker is not None
         assert isinstance(self._connector_metadata, NixlConnectorMetadata)
         self.connector_worker.start_load_kv(self._connector_metadata)
-        logger.info(f'libin debug start_load_kv return {os.getenv('RANK')}, takes {time.perf_counter() - s1}')
+        logger.info(f"libin debug start_load_kv return {os.getenv('RANK')}, takes {time.perf_counter() - s1}")
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         """NixlConnector does not do layerwise saving."""
@@ -230,7 +230,7 @@ class NixlConnector(KVConnectorBase_V1):
         if self.connector_worker.use_host_buffer and \
            self.connector_worker.copy_blocks:
             self.connector_worker.save_kv_to_host(self._connector_metadata)
-            logger.info(f'libin debug wait_for_save {os.getenv('RANK')}, takes {time.perf_counter() - s1}')
+            logger.info(f"libin debug wait_for_save {os.getenv('RANK')}, takes {time.perf_counter() - s1}")
 
 class NixlConnectorScheduler:
     """Implementation of Scheduler side methods"""
@@ -693,7 +693,7 @@ class NixlConnectorWorker:
                 with self._handshake_lock:
                     nixl2 = time.perf_counter()
                     global nixl1
-                    logger.info(f'libin debug done_callback {os.getenv('RANK')}, HANDSHAKE takes:{nixl2-nixl1}')
+                    logger.info(f"libin debug done_callback {os.getenv('RANK')}, HANDSHAKE takes:{nixl2-nixl1}")
                     del self._handshake_futures[eid]
                     try:
                         self._remote_agents[eid] = f.result()
