@@ -13,14 +13,19 @@ set -xe
 MODELS=(
     "/root/software/data/pytorch/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659/"
 )
+
 export VLLM_USE_V1=1
-#export VLLM_SKIP_WARMUP=True
+export VLLM_SKIP_WARMUP=True
 export PT_HPU_LAZY_MODE=1
 export VLLM_EXPONENTIAL_BUCKETING=False
 #export VLLM_PROMPT_BS_BUCKET_MIN=1
 #export VLLM_PROMPT_SEQ_BUCKET_MIN=1
-#export VLLM_PROMPT_SEQ_BUCKET_STEP=8192
-#export VLLM_PROMPT_SEQ_BUCKET_MAX=8192
+export VLLM_PROMPT_SEQ_BUCKET_MIN=8192
+export VLLM_PROMPT_SEQ_BUCKET_STEP=8192
+export VLLM_PROMPT_SEQ_BUCKET_MAX=8192
+export VLLM_DECODE_BLOCK_BUCKET_MIN=1024
+export VLLM_DECODE_BLOCK_BUCKET_MAX=1184
+export VLLM_USE_PADDING_AWARE_SCHEDULING=1
 
 # Number of prefill and decode instances to create
 NUM_PREFILL_INSTANCES=${NUM_PREFILL_INSTANCES:-1} # Default to 1
@@ -98,17 +103,16 @@ run_tests_for_model() {
     # Calculate port number (base port + instance number)
     PORT=$((8300 + i))
     # Calculate side channel port. Avoid clash with with TP workers. 
-    SIDE_CHANNEL_PORT=$((6559 + i))
+    SIDE_CHANNEL_PORT=$((5559 + i))
 
     echo "Starting prefill instance $i on GPU $GPU_ID, port $PORT"
 
     # Build the command with or without model-specific args
-    BASE_CMD="RANK=0 UCX_TLS=rc,ud,ib VLLM_NIXL_SIDE_CHANNEL_PORT=$SIDE_CHANNEL_PORT vllm serve $model_name \
+    BASE_CMD="HABANA_VISIBLE_DEVICES=0 RANK=0 UCX_TLS=rc,ud,ib VLLM_NIXL_SIDE_CHANNEL_PORT=$SIDE_CHANNEL_PORT vllm serve $model_name \
     --port $PORT \
     --long_prefill_token_threshold 8192 \
     --max_num_batched_tokens 8192 \
     --gpu-memory-utilization 0.3 \
-    --disable-log-requests \
     --tensor-parallel-size $PREFILLER_TP_SIZE \
     --kv-transfer-config '{\"kv_connector\":\"NixlConnector\",\"kv_role\":\"kv_both\",\"kv_buffer_device\":\"cpu\"}'"
 
@@ -132,18 +136,17 @@ run_tests_for_model() {
     # Calculate port number (base port + instance number)
     PORT=$((8400 + i))
     # Calculate side channel port
-    SIDE_CHANNEL_PORT=$((5659 + i * $DECODER_TP_SIZE))
+    SIDE_CHANNEL_PORT=$((4659 + i * $DECODER_TP_SIZE))
 
     echo "Starting decode instance $i on GPU $GPU_ID, port $PORT"
 
     # Build the command with or without model-specific args
-    BASE_CMD="RANK=1 UCX_TLS=rc,ud,ib VLLM_NIXL_SIDE_CHANNEL_PORT=$SIDE_CHANNEL_PORT vllm serve $model_name \
+    BASE_CMD="HABANA_VISIBLE_DEVICES=1 RANK=1 UCX_TLS=rc,ud,ib VLLM_NIXL_SIDE_CHANNEL_PORT=$SIDE_CHANNEL_PORT vllm serve $model_name \
     --port $PORT \
     --gpu-memory-utilization 0.3 \
     --tensor-parallel-size $DECODER_TP_SIZE \
     --long_prefill_token_threshold 8192 \
     --max_num_batched_tokens 8192 \
-    --disable-log-requests \
     --kv-transfer-config '{\"kv_connector\":\"NixlConnector\",\"kv_role\":\"kv_both\",\"kv_buffer_device\":\"cpu\"}'"
 
     if [ -n "$model_args" ]; then
@@ -171,7 +174,7 @@ run_tests_for_model() {
   done
 
   # Build the command for the proxy server with all the hosts and ports
-  PROXY_CMD="python toy_proxy_server.py --port 9192"
+  PROXY_CMD="python toy_proxy_server.py --port 9111"
 
   # Add all prefill hosts and ports
   PROXY_CMD+=" --prefiller-hosts ${PREFILL_HOSTS[@]}"
@@ -186,9 +189,9 @@ run_tests_for_model() {
   $PROXY_CMD &
 
   # Wait for the proxy to start
-  sleep 10
+  sleep 100
   
-# curl -X POST -s http://localhost:9192/v1/completions \
+# curl -X POST -s http://localhost:9111/v1/completions \
 #	-H "Content-Type: application/json" \
 #	-d '{
 #	"model": "meta-llama/Llama-3.1-8B",
@@ -198,7 +201,7 @@ run_tests_for_model() {
 #	}'
 #	sleep 5
 #	echo "--------------------===================-------------"
-#curl -X POST -s http://localhost:9192/v1/completions \
+#curl -X POST -s http://localhost:9111/v1/completions \
 #        -H "Content-Type: application/json" \
 #        -d '{
 #        "model": "/root/software/data/pytorch/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659/",
@@ -206,7 +209,7 @@ run_tests_for_model() {
 #        "max_tokens": 5,
 #        "temperature": 0
 #        }'
- #curl -X POST -s http://localhost:9192/v1/completions \
+ #curl -X POST -s http://localhost:9111/v1/completions \
  #      -H "Content-Type: application/json" \
  #      -d '{
  #      "model": "/root/software/data/pytorch/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659/",
@@ -219,21 +222,78 @@ run_tests_for_model() {
   # Run lm eval for this model
   echo "Running tests for $model_name"
   #TEST_MODEL=$model_name python -m pytest -s -x test_accuracy.py
-  python3 ../../../../benchmarks/benchmark_serving.py \
-   --port 9192 \
-   --seed "$(date +%s)" \
-   --model /root/software/data/pytorch/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659/ \
-   --dataset-name random \
-   --random-input-len 8192 \
-   --random-output-len 200 \
-   --num-prompts 100 \
-   --burstiness 100 \
-   --request-rate 3.6 \
-   --metric-percentiles 95 \
-   --percentile-metrics ttft,tpot,itl,e2el \
-   --backend openai \
-   --endpoint /v1/completions \
-   --ignore-eos 
+  #python3 ../../../../benchmarks/benchmark_serving.py \
+  # --port 9111 \
+  # --seed "$(date +%s)" \
+  # --model /root/software/data/pytorch/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659/ \
+  # --dataset-name random \
+  # --random-input-len 8192 \
+  # --random-output-len 256 \
+  # --num-prompts 32 \
+  # --burstiness 100 \
+  # --request-rate 3.6 \
+  # --metric-percentiles 95 \
+  # --percentile-metrics ttft,tpot,itl,e2el \
+  # --backend openai \
+  # --endpoint /v1/completions \
+  # --ignore-eos 
+
+  #sleep 100
+  #python3 ../../../../benchmarks/benchmark_serving.py \
+  # --port 8300 \
+  # --seed "$(date +%s)" \
+  # --model /root/software/data/pytorch/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659/ \
+  # --dataset-name random \
+  # --random-input-len 8192 \
+  # --random-output-len 200 \
+  # --num-prompts 100 \
+  # --burstiness 100 \
+  # --request-rate 3.6 \
+  # --metric-percentiles 95 \
+  # --percentile-metrics ttft,tpot,itl,e2el \
+  # --backend openai \
+  # --endpoint /v1/completions \
+  # --ignore-eos
+  qps=(0.1) # 0.25 0.5 1 2 3 4 5)
+  # explicit num_prompts mapping (must have same length as qps[])
+  num_prompts=(32) # 64 128 256 256 256 256 256)
+  input_len=8192
+  output_len=256 #56
+
+  # just sanity‐check lengths
+  if [ "${#qps[@]}" -ne "${#num_prompts[@]}" ]; then
+    echo "❌ qps[] and num_prompts[] must be the same length"
+    exit 1
+  fi
+
+  for i in "${!qps[@]}"; do
+    q=${qps[$i]}
+    np=${num_prompts[$i]}
+
+    ts=$(date +"%Y%m%d_%H%M%S")
+    logf="./nixlresult/run_in${input_len}_out${output_len}_qps${q//./p}_$ts.log"
+
+    echo "[$(date +"%Y-%m-%d %H:%M:%S")] input=${input_len}, output=${output_len}, qps=${q}, num_prompts=${np}" \
+      | tee "$logf"
+
+    python3 ../../../../benchmarks/benchmark_serving.py \
+      --port 9111 \
+      --seed "$(date +%s)" \
+      --model /root/software/data/pytorch/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659/ \
+      --tokenizer /root/software/data/pytorch/huggingface/hub/models--meta-llama--Llama-3.1-8B-Instruct/snapshots/0e9e39f249a16976918f6564b8830bc894c89659/ \
+      --dataset-name random \
+      --random-input-len "$input_len" \
+      --random-output-len 256 \
+      --num-prompts 32 \
+      --request-rate "$q" \
+      --percentile-metrics ttft,tpot,itl,e2el \
+      --burstiness 100 \
+      --backend openai \
+      --endpoint /v1/completions \
+      --ignore-eos \
+      2>&1 | tee -a "$logf"
+   
+  done
 
   # Clean up before running next model
   cleanup_instances

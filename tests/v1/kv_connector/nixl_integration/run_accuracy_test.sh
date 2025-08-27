@@ -89,7 +89,7 @@ run_tests_for_model() {
     # Calculate port number (base port + instance number)
     PORT=$((8300 + i))
     # Calculate side channel port. Avoid clash with with TP workers. 
-    SIDE_CHANNEL_PORT=$((6559 + i))
+    SIDE_CHANNEL_PORT=$((5559 + i))
 
     echo "Starting prefill instance $i on GPU $GPU_ID, port $PORT"
 

@@ -5,7 +5,7 @@ import logging
 import math
 import queue
 import threading
-import time
+import time,os
 import uuid
 from collections import defaultdict
 from collections.abc import Iterator
@@ -200,14 +200,19 @@ class NixlConnector(KVConnectorBase_V1):
     def get_finished(self,
                      finished_req_ids: set[str]) -> tuple[set[str], set[str]]:
         """Get the finished recving and sending requests."""
+        s1 = time.perf_counter()
         assert self.connector_worker is not None
-        return self.connector_worker.get_finished()
+        re= self.connector_worker.get_finished()
+        #logger.info(f'libin debug get_finished {os.getenv('RANK')}, takes {time.perf_counter() - s1}')
+        return re
 
     def start_load_kv(self, forward_context: "ForwardContext",
                       **kwargs) -> None:
+        s1 = time.perf_counter()
         assert self.connector_worker is not None
         assert isinstance(self._connector_metadata, NixlConnectorMetadata)
         self.connector_worker.start_load_kv(self._connector_metadata)
+        logger.info(f'libin debug start_load_kv return {os.getenv('RANK')}, takes {time.perf_counter() - s1}')
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         """NixlConnector does not do layerwise saving."""
@@ -219,12 +224,13 @@ class NixlConnector(KVConnectorBase_V1):
         pass
 
     def wait_for_save(self):
+        s1 = time.perf_counter()
         assert self.connector_worker is not None
         assert isinstance(self._connector_metadata, NixlConnectorMetadata)
         if self.connector_worker.use_host_buffer and \
            self.connector_worker.copy_blocks:
             self.connector_worker.save_kv_to_host(self._connector_metadata)
-
+            logger.info(f'libin debug wait_for_save {os.getenv('RANK')}, takes {time.perf_counter() - s1}')
 
 class NixlConnectorScheduler:
     """Implementation of Scheduler side methods"""
@@ -250,6 +256,7 @@ class NixlConnectorScheduler:
         # Reqs to send and their expiration time
         self._reqs_need_send: dict[ReqId, float] = {}
 
+
     def get_num_new_matched_tokens(
             self, request: "Request",
             num_computed_tokens: int) -> tuple[int, bool]:
@@ -269,7 +276,7 @@ class NixlConnectorScheduler:
         """
 
         params = request.kv_transfer_params
-        logger.debug(
+        logger.info(
             "NIXLConnector get_num_new_matched_tokens: "
             "num_computed_tokens=%s, kv_transfer_params=%s",
             num_computed_tokens, params)
@@ -280,6 +287,7 @@ class NixlConnectorScheduler:
             rounded_num_prompt_tokens = round_down(
                 len(request.prompt_token_ids), self.block_size)
             count = max(rounded_num_prompt_tokens - num_computed_tokens, 0)
+
             if count > 0:
                 return count, True
 
@@ -553,7 +561,8 @@ class NixlConnectorWorker:
         # With heterogeneous TP, P must wait for all assigned D TP workers to
         # finish reading before safely freeing the blocks.
         self.consumer_notification_counts_by_req = defaultdict[ReqId, int](int)
-
+        self.req_send_time={}
+        self.req_recv_time={}
     def __del__(self):
         """Cleanup background threads on destruction."""
         self._handshake_initiation_executor.shutdown(wait=False)
@@ -667,10 +676,12 @@ class NixlConnectorWorker:
         """Assign copy (d2h, h2d) operations when host buffer is used."""
         assert self.use_host_buffer
         self.copy_blocks = copy_operation
-
+    nixl1 = None
     def _background_nixl_handshake(self, req_id: str,
                                    remote_engine_id: EngineId, meta: ReqMeta):
         # Do NIXL handshake in background and add to _ready_requests when done.
+        global nixl1
+        nixl1 = time.perf_counter()
         fut = self._handshake_futures.get(remote_engine_id)
         if fut is None:
             fut = self._handshake_initiation_executor.submit(
@@ -680,6 +691,9 @@ class NixlConnectorWorker:
 
             def done_callback(f: Future[dict[int, str]], eid=remote_engine_id):
                 with self._handshake_lock:
+                    nixl2 = time.perf_counter()
+                    global nixl1
+                    logger.info(f'libin debug done_callback {os.getenv('RANK')}, HANDSHAKE takes:{nixl2-nixl1}')
                     del self._handshake_futures[eid]
                     try:
                         self._remote_agents[eid] = f.result()
@@ -1031,6 +1045,10 @@ class NixlConnectorWorker:
         assert self.copy_blocks is not None
 
         for req_id, meta in metadata.reqs_to_save.items():
+            if req_id not in self.req_send_time.keys():
+                self.req_send_time[req_id] = time.perf_counter()
+                logger.info(f"libin debug save_kv_to_host starts{os.getenv('RANK')} {req_id=} ")
+
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
                     "save_load_kv for request[%s] to host xfer buffer."
@@ -1039,6 +1057,7 @@ class NixlConnectorWorker:
             # blocking
             self.copy_blocks(self.block_size, self.device_kv_caches, self.host_xfer_buffers,
                              meta.local_block_ids, meta.local_block_ids, "d2h")
+            logger.info(f"libin debug save_kv_to_host {os.getenv('RANK')} time:{time.perf_counter()-self.req_send_time[req_id]}")
 
     def get_finished(self) -> tuple[set[str], set[str]]:
         """
@@ -1046,6 +1065,7 @@ class NixlConnectorWorker:
         The scheduler process (via the MultiprocExecutor) will use this output
         to track which workers are done.
         """
+        s1 = time.perf_counter()
         done_sending = self._get_new_notifs()
         done_recving = self._pop_done_transfers(self._recving_transfers)
         if len(done_sending) > 0 or len(done_recving) > 0:
@@ -1053,12 +1073,23 @@ class NixlConnectorWorker:
                 "Rank %s, get_finished: %s requests done sending "
                 "and %s requests done recving", self.tp_rank,
                 len(done_sending), len(done_recving))
-
+            if len(done_sending) > 0:
+                for req_id in done_sending:
+                    if req_id in self.req_send_time.keys():
+                        logger.info(f"libin debug get_finished Done_sending {os.getenv('RANK')}, time:{time.perf_counter()-self.req_send_time[req_id]}|{req_id=}")
+                    else:
+                        logger.info(f"libin debug get_finished Done_sending {os.getenv('RANK')}, can't find {req_id=}")
         if self.use_host_buffer:
             for req_id in done_recving:
+                if req_id in self.req_recv_time.keys():
+                    logger.info(f"libin debug get_finished done_recving {os.getenv('RANK')}, time:{time.perf_counter()-self.req_recv_time[req_id]}|{req_id=}")
+                else:
+                    logger.info(f"libin debug get_finished done_recving {os.getenv('RANK')}, can't find {req_id=}")
+                s2 = time.perf_counter()
                 meta = self._recving_metadata.pop(req_id)
                 assert meta, f"{req_id} not found in recving_metadata list"
                 self.sync_recved_kv_to_device(req_id, meta)
+                logger.info(f"libin debug get_finished {os.getenv('RANK')}, d2h {time.perf_counter()-s2}| {req_id=}")
 
         # Handle timeout to avoid stranding blocks on remote.
         now = time.perf_counter()
@@ -1137,7 +1168,12 @@ class NixlConnectorWorker:
         Start loading by triggering non-blocking nixl_xfer.
         We check for these trnxs to complete in each step().
         """
+        s1 = time.perf_counter()
+        #logger.info(f'libin debug start_load_kv, {os.getenv('RANK')}')
         for req_id, meta in metadata.reqs_to_recv.items():
+            if req_id not in self.req_recv_time.keys():
+                self.req_recv_time[req_id] = time.perf_counter()
+                logger.info(f"libin debug start_load_kv starts {os.getenv('RANK')} for {req_id=}")
             remote_engine_id = meta.remote_engine_id
             logger.debug(
                 "start_load_kv for request %s from remote engine %s. "
@@ -1150,17 +1186,22 @@ class NixlConnectorWorker:
                 # Initiate handshake with remote engine to exchange metadata.
                 with self._handshake_lock:
                     if remote_engine_id not in self._remote_agents:
+                        s2 = time.perf_counter()
+                        logger.info(f"libin debug start_load_kv  {os.getenv('RANK')}, start handleshake before {s2 - s1} {req_id=}")
                         self._background_nixl_handshake(
                             req_id, remote_engine_id, meta)
                         continue
-
+            s3 = time.perf_counter()
+            #logger.info(f'libin debug _read_blocks_for_req start {os.getenv('RANK')}, {req_id=} handshake time {s3-self.req_recv_time[req_id]}')
             # Handshake already completed, start async read xfer.
             self._read_blocks_for_req(req_id, meta)
-
+            #logger.info(f'libin debug _read_blocks_for_req end {os.getenv('RANK')}, {req_id=} async transfer {time.perf_counter() - s3}')
         # Start transfers for requests whose handshakes have now finished.
         while not self._ready_requests.empty():
+            s4 = time.perf_counter()
+            #logger.info(f'libin debug _read_blocks_for_req1 start {os.getenv('RANK')}')
             self._read_blocks_for_req(*self._ready_requests.get_nowait())
-
+            #logger.info(f'libin debug _read_blocks_for_req1 end {os.getenv('RANK')} async transfer: {time.perf_counter() - s4}')
         # Add to requests that are waiting to be read and track expiration.
         self._reqs_to_send.update(metadata.reqs_to_send)
 

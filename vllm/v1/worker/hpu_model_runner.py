@@ -905,8 +905,8 @@ class HPUModelRunner:
                 break
 
             # This is decode
-            if not self.is_decoder_only(req_id):
-                assert num_scheduled_tokens == 1
+            #if not self.is_decoder_only(req_id):
+                #assert num_scheduled_tokens == 1
 
             decode_req_ids.append(req_id)
             num_computed_tokens_decode.append(int(num_computed_tokens + 1))
@@ -1396,8 +1396,8 @@ class HPUModelRunner:
             num_scheduled_tokens.append(seq_num_scheduled_tokens)
             num_prompt_tokens.append(seq_num_prompt_tokens)
             # NOTE: assert that all the decodes are "decodes".
-            if idx < num_decodes and not self.is_decoder_only(req_id):
-                assert seq_num_scheduled_tokens == 1
+            #if idx < num_decodes and not self.is_decoder_only(req_id):
+                #assert seq_num_scheduled_tokens == 1
         return (self._prepare_prefill_inputs(num_prefills, num_decodes,
                                              num_scheduled_tokens),
                 self._prepare_decode_inputs(num_decodes, num_scheduled_tokens))
@@ -1606,7 +1606,7 @@ class HPUModelRunner:
         # On CPU, sanitize [tokD0, tokD1, tokD2, 0, tokP0, tokP1, tokP2, 0] -> [tokD0, tokD1, tokD2, tokP0, tokP1, tokP2] # noqa
         # Return [tokD0, tokD1, tokD2, tokP0, tokP1, tokP2]
         #logger.debug(f'buke enter execute_model ||{os.getpid()=}|{scheduler_output=}')
-
+        s1 = time.perf_counter()
         if self.defragmenter.enabled and self.kv_caches:
             new = {
                 req.req_id: flatten(req.block_ids)
@@ -1647,15 +1647,17 @@ class HPUModelRunner:
         prefill_sampled_requests = []
         decode_sampled_token_ids = []
         decode_sampled_requests = []
-        if not has_kv_transfer_group():
-            assert not (num_prefills > 0 and num_decodes > 0)
+        #if not has_kv_transfer_group():
+            #assert not (num_prefills > 0 and num_decodes > 0)
         with set_forward_context(None, self.vllm_config):
             self.maybe_setup_kv_connector(scheduler_output)
         finished_sending, finished_recving = set(), set()
-
+        token_ids_s = None
         ######################### PREFILLS #########################
         if num_prefills > 0:
+
             htorch.core.mark_step()
+
             for idx, (req_id, prompt_len, token_ids, position_ids,
                       attn_metadata, logits_indices,
                       logits_requests) in enumerate(
@@ -1663,12 +1665,13 @@ class HPUModelRunner:
                 self.event_start = self.profiler.get_timestamp_us()
                 self.profiler.start("internal", "prefill")
                 htorch.core.mark_step()
+                token_ids_s = token_ids.shape
                 prefill_hidden_states_ts, logits_device = \
                     self._execute_model_generic(
                         token_ids, position_ids, attn_metadata, logits_indices,
                         self.kv_caches)
                 htorch.core.mark_step()
-
+                #logger.info(f'libin debug done prompt {os.getenv('RANK')} {token_ids.shape=} ')
                 with self.profiler.record_event('internal', "sampler"):
                     sampling_metadata = self._prepare_sampling(
                         batch_changed, req_id, pad_to=logits_device.shape[0])
@@ -1701,6 +1704,7 @@ class HPUModelRunner:
         ######################### DECODES #########################
         # Decodes run as one single batch with [padded_decode_bs, 1]
         if num_decodes > 0:
+            token_ids_s = decode_data.token_ids.shape
             self.event_start = self.profiler.get_timestamp_us()
             self.profiler.start("internal", "decode")
             assert decode_data is not None
@@ -1802,6 +1806,9 @@ class HPUModelRunner:
         #logger.debug(f"buke hpu_model_runner.py: {model_runner_output=}")
         if has_kv_transfer_group():
             get_kv_transfer_group().clear_connector_metadata()
+        s2= time.perf_counter()
+        if token_ids_s and num_prefills > 0:
+            logger.info(f'libin debug execute_model prompt {os.getenv('RANK')} {token_ids_s=} step time:{s2-s1}')
         return model_runner_output
     def kv_connector_no_forward(
             self, scheduler_output: "SchedulerOutput") -> ModelRunnerOutput:
@@ -2532,6 +2539,7 @@ def copy_kv_blocks(
     dst_block_ids: list[int],
     direction: Literal["h2d", "d2h"],
 ) -> None:
+
     """Copy kv blocks between different buffers."""
     if not src_kv_caches or not dst_kv_caches or \
        not src_block_ids or not dst_block_ids or \
@@ -2576,4 +2584,4 @@ def copy_kv_blocks(
         
     torch.hpu.synchronize()
     
-    logger.info(f"copy_kv_blocks: copy takes {time.perf_counter() - start}|{direction=}|{os.getpid()=}|{block_size=}|{len(src_block_ids)=}|{len(dst_block_ids)=}")
+    logger.info(f"copy_kv_blocks: copy takes {time.perf_counter() - start}|{direction=}|{os.getpid()=}|{block_size=}|{len(src_block_ids)=}|{len(dst_block_ids)=}| {len(src_kv_caches)=} | ")

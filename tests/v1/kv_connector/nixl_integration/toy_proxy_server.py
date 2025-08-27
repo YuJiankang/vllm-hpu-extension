@@ -4,7 +4,7 @@
 import argparse
 import itertools
 import logging
-import os
+import os,time,sys
 import uuid
 from contextlib import asynccontextmanager
 
@@ -184,6 +184,7 @@ async def stream_service_response(client_info: dict, endpoint: str,
     """
     Asynchronously stream response from a service using a client from the pool.
     """
+    s1 = time.perf_counter()
     headers = {
         "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
         "X-Request-Id": request_id
@@ -199,6 +200,7 @@ async def stream_service_response(client_info: dict, endpoint: str,
 
 
 async def _handle_completions(api: str, request: Request):
+    s1 = time.perf_counter()
     try:
         req_data = await request.json()
         request_id = str(uuid.uuid4())
@@ -207,9 +209,13 @@ async def _handle_completions(api: str, request: Request):
         prefill_client_info = get_next_client(request.app, 'prefill')
 
         # Send request to prefill service
-        response = await send_request_to_service(prefill_client_info, api,
+        p = send_request_to_service(prefill_client_info, api,
                                                  req_data, request_id)
-
+        s2 = time.perf_counter()
+        print(f'libin proxy send to prefill {s2-s1}')
+        sys.stdout.flush()
+        response = await p
+        s3 = time.perf_counter()
         # Extract the needed fields
         response_json = response.json()
         kv_transfer_params = response_json.get('kv_transfer_params', {})
@@ -223,17 +229,29 @@ async def _handle_completions(api: str, request: Request):
 
         # Stream response from decode service
         async def generate_stream():
+            is_first = False
+            s6 = time.perf_counter()
             async for chunk in stream_service_response(decode_client_info,
                                                        api,
                                                        req_data,
                                                        request_id=request_id):
+
+                if is_first is False:
+                    s4 = time.perf_counter()
+                    print(f'libin debug proxy receive decode 1 total:{s4-s1}| prefill:{s3-s1}| in-between:{s6-s3}|decode:{s4-s6}| {s6=} {s4=}')
+                    sys.stdout.flush()
+                    is_first = True
                 yield chunk
 
-        return StreamingResponse(generate_stream(),
+        re =  StreamingResponse(generate_stream(),
                                  media_type="application/json")
+        s5 =  time.perf_counter()
+        #print(f'libin debug proxy receive decode2 {s5-s1} {s5-s6}')
+        
+        #sys.stdout.flush()
+        return re
 
     except Exception as e:
-        import sys
         import traceback
         exc_info = sys.exc_info()
         print("Error occurred in disagg prefill proxy server"

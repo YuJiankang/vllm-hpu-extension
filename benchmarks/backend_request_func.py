@@ -295,6 +295,7 @@ async def async_request_openai_completions(
                 url=api_url, json=payload, headers=headers
             ) as response:
                 if response.status == 200:
+
                     first_chunk_received = False
                     async for chunk_bytes in response.content:
                         chunk_bytes = chunk_bytes.strip()
@@ -318,7 +319,8 @@ async def async_request_openai_completions(
                                     first_chunk_received = True
                                     ttft = time.perf_counter() - st
                                     output.ttft = ttft
-
+                                    print(f'libin debug backend request {ttft=}')
+                                    sys.stdout.flush()
                                 # Decoding phase
                                 else:
                                     output.itl.append(timestamp - most_recent_timestamp)
