@@ -112,6 +112,7 @@ run_tests_for_model() {
     --port $PORT \
     --long_prefill_token_threshold 8192 \
     --max_num_batched_tokens 8192 \
+    --disable-log-requests \
     --gpu-memory-utilization 0.3 \
     --tensor-parallel-size $PREFILLER_TP_SIZE \
     --kv-transfer-config '{\"kv_connector\":\"NixlConnector\",\"kv_role\":\"kv_both\",\"kv_buffer_device\":\"cpu\"}'"
@@ -147,6 +148,7 @@ run_tests_for_model() {
     --tensor-parallel-size $DECODER_TP_SIZE \
     --long_prefill_token_threshold 8192 \
     --max_num_batched_tokens 8192 \
+    --disable-log-requests \
     --kv-transfer-config '{\"kv_connector\":\"NixlConnector\",\"kv_role\":\"kv_both\",\"kv_buffer_device\":\"cpu\"}'"
 
     if [ -n "$model_args" ]; then
@@ -254,9 +256,9 @@ run_tests_for_model() {
   # --backend openai \
   # --endpoint /v1/completions \
   # --ignore-eos
-  qps=(0.1 0.25 0.5 1 2 3 4) # 5)
+  qps=(1) #(0.1 0.25 0.5 1 2 3 4) # 5)
   # explicit num_prompts mapping (must have same length as qps[])
-  num_prompts=(32 64 128 256 256 256 256) # 256)
+  num_prompts=(64) #(32 64 128 256 256 256 256) # 256)
   input_len=8192
   output_len=256 #56
 

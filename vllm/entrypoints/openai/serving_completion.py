@@ -103,6 +103,7 @@ class OpenAIServingCompletion(OpenAIServing):
 
         request_id = f"cmpl-{self._base_request_id(raw_request)}"
         created_time = int(time.time())
+        s2 = time.perf_counter()
         logger.info(f"libin create_completion my rank:{os.getenv('RANK')} create req {request_id}")
         request_metadata = RequestResponseMetadata(request_id=request_id)
         if raw_request:
@@ -135,6 +136,7 @@ class OpenAIServingCompletion(OpenAIServing):
         except jinja2.TemplateError as e:
             logger.exception("Error in preprocessing prompt inputs")
             return self.create_error_response(str(e))
+        s3 = time.perf_counter()
         logger.info(f"libin create_completion my rank:{os.getenv('RANK')} schedule {request_id}")
         # Schedule the request and get the result generator.
         generators: list[AsyncGenerator[RequestOutput, None]] = []
@@ -206,9 +208,9 @@ class OpenAIServingCompletion(OpenAIServing):
         except ValueError as e:
             # TODO: Use a vllm-specific Validation Error
             return self.create_error_response(str(e))
-
+        s4 = time.perf_counter()
         result_generator = merge_async_iterators(*generators)
-
+        s5 = time.perf_counter()
         model_name = self._get_model_name(request.model, lora_request)
         num_prompts = len(engine_prompts)
 
@@ -218,10 +220,11 @@ class OpenAIServingCompletion(OpenAIServing):
         stream = (request.stream
                   and (request.best_of is None or request.n == request.best_of)
                   and not request.use_beam_search)
+        s6 = time.perf_counter()
         logger.info(f"libin create_completion my rank:{os.getenv('RANK')} creating result {request_id}")
         # Streaming response
         if stream:
-            return self.completion_stream_generator(
+            ret =  self.completion_stream_generator(
                 request,
                 result_generator,
                 request_id,
@@ -230,6 +233,8 @@ class OpenAIServingCompletion(OpenAIServing):
                 num_prompts=num_prompts,
                 tokenizer=tokenizer,
                 request_metadata=request_metadata)
+            logger.info(f"libin create_completion done response stream my rank:{os.getenv('RANK')} time:{s6-s1}| b_schedure:{s3-s1}| schedule:{s4-s3}| merge:{s5-s4}| {s6-s5=}")
+            return ret
 
         # Non-streaming response
         final_res_batch: list[Optional[RequestOutput]] = [None] * num_prompts
@@ -276,9 +281,11 @@ class OpenAIServingCompletion(OpenAIServing):
             async def fake_stream_generator() -> AsyncGenerator[str, None]:
                 yield f"data: {response_json}\n\n"
                 yield "data: [DONE]\n\n"
-
+            s7 = time.perf_counter()
+            logger.info(f"libin create_completion done response fake stream my rank:{os.getenv('RANK')} time:{s7-s1}| b_schedure:{s3-s1}| schedule:{s4-s3}| merge:{s5-s4}| {s6-s5=}| result:{s7-s6}")
             return fake_stream_generator()
-        logger.info(f"libin create_completion my rank:{os.getenv('RANK')} done response {request_id}")
+        s7 = time.perf_counter()
+        logger.info(f"libin create_completion done response non-stream my rank:{os.getenv('RANK')} time:{s7-s1}| b_schedure:{s3-s1}| schedule:{s4-s3}| merge:{s5-s4}| {s6-s5=}| result:{s7-s6}")
         return response
 
     async def completion_stream_generator(

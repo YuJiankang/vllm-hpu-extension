@@ -267,6 +267,7 @@ class _AsyncLLMEngine(LLMEngine):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+    
     async def step_async(
         self, virtual_engine: int
     ) -> List[Union[RequestOutput, PoolingRequestOutput]]:
@@ -281,6 +282,7 @@ class _AsyncLLMEngine(LLMEngine):
         """
         # these are cached outputs from previous iterations. None if on first
         # iteration
+        s1 = time.perf_counter()
         cached_outputs = self.cached_scheduler_outputs[virtual_engine]
         seq_group_metadata_list = cached_outputs.seq_group_metadata_list
         scheduler_outputs = cached_outputs.scheduler_outputs
@@ -352,11 +354,11 @@ class _AsyncLLMEngine(LLMEngine):
             if allow_async_output_proc:
                 execute_model_req.async_callback = self.async_callbacks[
                     virtual_engine]
-
+            s2 = time.perf_counter()
             # Execute the model.
             outputs = await self.model_executor.execute_model_async(
                 execute_model_req)
-
+            s3 = time.perf_counter()
             # we need to do this here so that last step's sampled_token_ids can
             # be passed to the next iteration for PP.
             if self.scheduler_config.is_multi_step:
@@ -416,7 +418,7 @@ class _AsyncLLMEngine(LLMEngine):
             if len(ctx.output_queue) > 0:
                 self._process_model_outputs(ctx=ctx)
             assert len(ctx.output_queue) == 0
-
+        s4 = time.perf_counter()
         return ctx.request_outputs
 
     async def stop_remote_worker_execution_loop_async(self) -> None:
@@ -481,6 +483,7 @@ class _AsyncLLMEngine(LLMEngine):
     ) -> None:
         """Async version of
         [`add_request`][vllm.engine.llm_engine.LLMEngine.add_request]."""
+        s1 = time.perf_counter()
         if inputs is not None:
             prompt = inputs
         assert prompt is not None and params is not None
@@ -532,6 +535,7 @@ class _AsyncLLMEngine(LLMEngine):
             trace_headers=trace_headers,
             priority=priority,
         )
+
 
     async def check_health_async(self) -> None:
         self.model_executor.check_health()
@@ -834,7 +838,8 @@ class AsyncLLMEngine(EngineClient):
         has_requests_in_progress = [False] * pipeline_parallel_size
         while True:
             if not any(has_requests_in_progress):
-                logger.debug("Waiting for new requests...")
+                s1 = time.perf_counter()
+                logger.info("Waiting for new requests...")
                 # Stop the execute model loop in parallel workers until there
                 # are more requests to process. This avoids waiting
                 # indefinitely in torch.distributed ops which may otherwise
@@ -849,15 +854,19 @@ class AsyncLLMEngine(EngineClient):
                 await asyncio.sleep(0)
                 if engine_ref() is None:
                     return
+
                 await request_tracker.wait_for_new_requests()
                 engine = engine_ref()
                 if not engine:
                     return
-                logger.debug("Got new requests!")
+                s2 = time.perf_counter()
+                logger.info("Got new requests!")
                 requests_in_progress = [
                     asyncio.create_task(engine.engine_step(ve))
                     for ve in range(pipeline_parallel_size)
                 ]
+                s3 = time.perf_counter()
+                logger.info("Processing engine step for new requests!")
                 has_requests_in_progress = [True] * pipeline_parallel_size
 
             # Abort if iteration takes too long due to unrecoverable errors
@@ -870,6 +879,8 @@ class AsyncLLMEngine(EngineClient):
                     for _ in range(pipeline_parallel_size):
                         await asyncio.sleep(0)
                 for task in done:
+                    s4 = = time.perf_counter()
+                    logger.info("Done engine step for new requests 1st step! {os.getnev('RANK)}| total:{t4-t1}| req:{s2-s1}| exe:{ s3-s2}| out:{s4-s3}")
                     result = task.result()
                     virtual_engine = requests_in_progress.index(task)
                     has_unfinished_requests = (

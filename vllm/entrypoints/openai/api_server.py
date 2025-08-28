@@ -594,6 +594,7 @@ async def create_completion(request: CompletionRequest, raw_request: Request):
     #import remote_pdb;remote_pdb.set_trace()
     try:
         generator = await handler.create_completion(request, raw_request)
+        s2 = time.perf_counter()
     except OverflowError as e:
         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST.value,
                             detail=str(e)) from e
@@ -604,20 +605,21 @@ async def create_completion(request: CompletionRequest, raw_request: Request):
     if isinstance(generator, ErrorResponse):
         re = JSONResponse(content=generator.model_dump(),
                             status_code=generator.code)
-        s2 = time.perf_counter()
-        logger.info(f"libin debug create_completion 1 my_rank:{os.getenv('RANK')} takes: {s2-s1}")
+        s3 = time.perf_counter()
+        logger.info(f"libin debug create_completion 1 my_rank:{os.getenv('RANK')} takes: {s3-s1}")
         return re
         
     elif isinstance(generator, CompletionResponse):
+     
         re = JSONResponse(content=generator.model_dump())
-        s2 = time.perf_counter()
-        logger.info(f"libin debug create_completion 2 my_rank:{os.getenv('RANK')} takes: {s2-s1}")
+        s3 = time.perf_counter()
+        logger.info(f"libin debug create_completion 2 my_rank:{os.getenv('RANK')} takes: {s3-s1}| {s3-s2=}")
         return re        
 
     re = StreamingResponse(content=generator, media_type="text/event-stream")
-    s2 = time.perf_counter()
+    s3 = time.perf_counter()
 
-    logger.info(f"libin debug create_completion 3 my_rank:{os.getenv('RANK')} takes: {s2-s1}| {s1=}| {s2=}")
+    logger.info(f"libin debug create_completion 3 my_rank:{os.getenv('RANK')} takes: {s3-s1}|| {s3-s2=}")
     return re
 
 
