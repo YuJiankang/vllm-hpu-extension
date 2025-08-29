@@ -1073,18 +1073,8 @@ class NixlConnectorWorker:
                 "Rank %s, get_finished: %s requests done sending "
                 "and %s requests done recving", self.tp_rank,
                 len(done_sending), len(done_recving))
-            if len(done_sending) > 0:
-                for req_id in done_sending:
-                    if req_id in self.req_send_time.keys():
-                        logger.info(f"libin debug get_finished Done_sending {os.getenv('RANK')}, time:{time.perf_counter()-self.req_send_time[req_id]}|{req_id=}")
-                    else:
-                        logger.info(f"libin debug get_finished Done_sending {os.getenv('RANK')}, can't find {req_id=}")
         if self.use_host_buffer:
             for req_id in done_recving:
-                if req_id in self.req_recv_time.keys():
-                    logger.info(f"libin debug get_finished done_recving {os.getenv('RANK')}, time:{time.perf_counter()-self.req_recv_time[req_id]}|{req_id=}")
-                else:
-                    logger.info(f"libin debug get_finished done_recving {os.getenv('RANK')}, can't find {req_id=}")
                 s2 = time.perf_counter()
                 meta = self._recving_metadata.pop(req_id)
                 assert meta, f"{req_id} not found in recving_metadata list"
@@ -1150,7 +1140,7 @@ class NixlConnectorWorker:
                 xfer_state = self.nixl_wrapper.check_xfer_state(handle)
                 if xfer_state == "DONE":
                     xfer_end_time = time.perf_counter()
-                    logger.debug(f"buke _pop_done_transfers: {req_id=}|{handle=}|{xfer_end_time=}|{xfer_end_time-_xfer_stime=}")
+                    logger.info(f"libin debug _pop_done_transfers: {req_id=}|{handle=}|{xfer_end_time=}|{xfer_end_time-_xfer_stime=}")
                     self.nixl_wrapper.release_xfer_handle(handle)
                 elif xfer_state == "PROC":
                     in_progress = True
