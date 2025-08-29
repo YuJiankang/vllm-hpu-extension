@@ -879,7 +879,7 @@ class AsyncLLMEngine(EngineClient):
                     for _ in range(pipeline_parallel_size):
                         await asyncio.sleep(0)
                 for task in done:
-                    s4 = = time.perf_counter()
+                    s4 = time.perf_counter()
                     logger.info("Done engine step for new requests 1st step! {os.getnev('RANK)}| total:{t4-t1}| req:{s2-s1}| exe:{ s3-s2}| out:{s4-s3}")
                     result = task.result()
                     virtual_engine = requests_in_progress.index(task)

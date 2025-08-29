@@ -15,7 +15,7 @@ MODELS=(
 )
 
 export VLLM_USE_V1=1
-#export VLLM_SKIP_WARMUP=True
+export VLLM_SKIP_WARMUP=True
 export PT_HPU_LAZY_MODE=1
 export VLLM_EXPONENTIAL_BUCKETING=False
 #export VLLM_PROMPT_BS_BUCKET_MIN=1
@@ -256,9 +256,9 @@ run_tests_for_model() {
   # --backend openai \
   # --endpoint /v1/completions \
   # --ignore-eos
-  qps=(1) #(0.1 0.25 0.5 1 2 3 4) # 5)
+  qps=(0.5) #(0.1 0.25 0.5 1 2 3 4) # 5)
   # explicit num_prompts mapping (must have same length as qps[])
-  num_prompts=(64) #(32 64 128 256 256 256 256) # 256)
+  num_prompts=(32) #(32 64 128 256 256 256 256) # 256)
   input_len=8192
   output_len=256 #56
 

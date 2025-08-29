@@ -302,11 +302,12 @@ class AsyncLLM(EngineClient):
         """
 
         try:
+            s1 = time.perf_counter()
             # We start the output_handler on the first call to generate() so
             # we can call __init__ before the event loop, which enables us
             # to handle startup failure gracefully in the OpenAI server.
             self._run_output_handler()
-
+            s2 = time.perf_counter()
             q = await self.add_request(
                 request_id,
                 prompt,
@@ -317,18 +318,20 @@ class AsyncLLM(EngineClient):
                 priority=priority,
                 data_parallel_rank=data_parallel_rank,
             )
-
+            s3 = time.perf_counter()
             # The output_handler task pushes items into the queue.
             # This task pulls from the queue and yields to caller.
             finished = False
             while not finished:
+                s4 = time.perf_counter()
                 # Note: drain queue without await if possible (avoids
                 # task switching under load which helps performance).
                 out = q.get_nowait() or await q.get()
-
+                s5 = time.perf_counter()
                 # Note: both OutputProcessor and EngineCore handle their
                 # own request cleanup based on finished.
                 finished = out.finished
+                logger.info(f"libin debug async_llm generate loop my rank:{os.getenv('RANK')}| time:{s5-s4}")
                 yield out
 
         # If the request is disconnected by the client, generate()
@@ -357,6 +360,7 @@ class AsyncLLM(EngineClient):
             if self.log_requests:
                 logger.info("Request %s failed.", request_id)
             raise EngineGenerateError() from e
+        logger.info(f"libin debug async_llm generate my rank:{os.getenv('RANK')}| takes:{time.perf_counter()-s1}| request:{s3-s1}")
 
     def _run_output_handler(self):
         """Background loop: pulls from EngineCore and pushes to AsyncStreams."""

@@ -852,10 +852,12 @@ class DPEngineCoreProc(EngineCoreProc):
         # Loop until process is sent a SIGINT or SIGTERM
         while True:
             # 1) Poll the input queue until there is work to do.
+            s1 = time.perf_counter()
             self._process_input_queue()
-
+            s2 = time.perf_counter()
             # 2) Step the engine core.
             executed = self._process_engine_step()
+            s3 = time.perf_counter()
             self._maybe_publish_request_counts()
 
             local_unfinished_reqs = self.scheduler.has_unfinished_requests()
@@ -867,7 +869,7 @@ class DPEngineCoreProc(EngineCoreProc):
                 # We are in a running state and so must execute a dummy pass
                 # if the model didn't execute any ready requests.
                 self.execute_dummy_batch()
-
+            s4 = time.perf_counter()
             # 3) All-reduce operation to determine global unfinished reqs.
             self.engines_running = self._has_global_unfinished_reqs(
                 local_unfinished_reqs)
@@ -881,7 +883,9 @@ class DPEngineCoreProc(EngineCoreProc):
                         (-1,
                          EngineCoreOutputs(wave_complete=self.current_wave)))
                 self.current_wave += 1
-
+            s5 = time.perf_counter()
+            logger.info(f"libin debug core run_busy {os.getenv('RANK')| total:{s5-s1}| input:{s2-s1}| step:{s3-s2} | after_s:{s4-s3} | not_finished{s5-s4}}")
+            
     def _has_global_unfinished_reqs(self, local_unfinished: bool) -> bool:
 
         # Optimization - only perform finish-sync all-reduce every 24 steps.
