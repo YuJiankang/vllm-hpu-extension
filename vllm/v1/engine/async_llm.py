@@ -40,6 +40,8 @@ from vllm.v1.metrics.loggers import (StatLoggerBase, StatLoggerFactory,
 from vllm.v1.metrics.prometheus import shutdown_prometheus
 from vllm.v1.metrics.stats import IterationStats, SchedulerStats
 
+import time, os
+
 logger = init_logger(__name__)
 
 
