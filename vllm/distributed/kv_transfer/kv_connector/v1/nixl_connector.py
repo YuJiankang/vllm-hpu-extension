@@ -49,8 +49,12 @@ logger = init_logger(__name__)
 # Lazy import nixl_wrapper to avoid loading nixl_bindings if nixl is not used
 try:
     from nixl._api import nixl_agent as NixlWrapper
+     import habana_frameworks.torch.utils as htutils
+    logger.info("htutils is available")
     logger.info("NIXL is available")
 except ImportError:
+    logger.warning("htutils is not available")
+    htutils = None
     logger.warning("NIXL is not available")
     NixlWrapper = None
 
@@ -59,7 +63,7 @@ except ImportError:
 _NIXL_SUPPORTED_XPUS = {
     "cuda": ("cuda", ),
     "tpu": ("cpu", ),
-    "hpu": ("cpu", )
+    "hpu": ("cpu", "hpu")
 }
 
 
@@ -484,7 +488,7 @@ class NixlConnectorWorker:
         # used when xPU memory can not be registered under nixl
         self.host_xfer_buffers: dict[str, torch.Tensor] = {}
         self.use_host_buffer = self.kv_buffer_device == "cpu"
-        if self.kv_buffer_device == "cuda":
+        if self.kv_buffer_device == "cuda" or self.kv_buffer_device == "hpu":
             self.nixl_memory_type = "VRAM"
         elif self.kv_buffer_device == "cpu":
             self.nixl_memory_type = "DRAM"
@@ -817,7 +821,11 @@ class NixlConnectorWorker:
                          or self._use_pallas_v1 or self._use_flashinfer \
                          else cache_or_caches
             for cache in cache_list:
-                base_addr = cache.data_ptr()
+                if self.device_type == "hpu" and not self.use_host_buffer and htutils is not None:
+                    base_addr = htutils.experimental._data_ptr(cache)
+                    logger.debug(f'buke register gaudi memory for gdr: {base_addr=}|{hex(base_addr)=}|{cache.data_ptr()=}')
+                else:
+                    base_addr = cache.data_ptr()
                 region_len = self.num_blocks * self.block_len
                 # NOTE: use tp_rank for device_id since multi-node TP
                 # is rarely used.
