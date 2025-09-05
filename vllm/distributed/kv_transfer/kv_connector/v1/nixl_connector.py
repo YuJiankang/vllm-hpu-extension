@@ -49,7 +49,7 @@ logger = init_logger(__name__)
 # Lazy import nixl_wrapper to avoid loading nixl_bindings if nixl is not used
 try:
     from nixl._api import nixl_agent as NixlWrapper
-     import habana_frameworks.torch.utils as htutils
+    import habana_frameworks.torch.utils as htutils
     logger.info("htutils is available")
     logger.info("NIXL is available")
 except ImportError:
