@@ -1,4 +1,6 @@
 import itertools
+import numpy as np
+import math
 import operator
 import os
 from dataclasses import dataclass, field
@@ -133,14 +135,28 @@ def generate_prompt_buckets(bs_bucket_config,
     _, _, bmax = seq_bucket_config
     batch_size_buckets = warmup_range(bs_bucket_config)
     seq_bucket_config = warmup_range(seq_bucket_config)
-
+    long_context = False
+    if bmax >= 8192:
+        long_context = True
     if prefix_caching:
         buckets_3d = []
         for bs in batch_size_buckets:
             for b in seq_bucket_config:
                 max_blocks_range = (bmax - b) // block_size
-                for i in range(0, max_blocks_range + 1):
-                    buckets_3d.append((bs, b, i))
+                if max_blocks_range < 0:
+                    continue
+                if not long_context:
+                    for i in range(0, max_blocks_range + 1):
+                        buckets_3d.append((bs, b, i))
+                else:
+                    # add a bucket without context first
+                    buckets_3d.append((bs, b, 0))
+                    num_buckets_3d = math.ceil(math.log2(max_blocks_range if max_blocks_range > 0 else 1)) + 1
+                for i in range(1, num_buckets_3d + 1):
+                    power_unpadded = 1 * np.float_power(
+                        max_blocks_range, (1 / float(num_buckets_3d)) * i)
+                    new_bucket = math.ceil(power_unpadded)
+                    buckets_3d.append((bs, b, new_bucket))
         buckets = buckets_3d
     else:
         buckets = list(
