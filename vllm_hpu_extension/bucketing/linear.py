@@ -93,7 +93,7 @@ def read_bucket_settings(phase: str, dim: str, **defaults):
     default_values = [defaults[p] for p in params]
     values = []
     for e, d in zip(env_vars, default_values):
-        value = os.environ.get(e, d)
+        value = str(os.environ.get(e, d))
         if value.isdigit():
             value = int(value)
         else:
