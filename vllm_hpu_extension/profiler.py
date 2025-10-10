@@ -53,15 +53,15 @@ class FileWriter(threading.Thread):
 
 
 class HabanaHighLevelProfiler:
-    profiling_trace_events: queue.Queue = queue.Queue()
     event_tid = {'counter': 1, 'external': 2, 'internal': 3}
-    event_cache: List[Any] = []
 
     def __init__(self, vllm_instance_id = None):
         self.enabled = os.getenv('VLLM_PROFILER_ENABLED',
                                  'false').lower() == 'true' and int(
                                      os.getenv('RANK', '0')) == 0
         self.pid = os.getpid()
+        self.profiling_trace_events: queue.Queue = queue.Queue()
+        self.event_cache: List[Any] = []
         if self.enabled:
             self.vllm_instance_id = vllm_instance_id if vllm_instance_id is not None \
                 else f"vllm-instance-{self.pid}-{str(uuid.uuid4().hex)}"
