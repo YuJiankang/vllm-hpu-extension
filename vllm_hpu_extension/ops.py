@@ -855,10 +855,14 @@ def fp8_channel_moe_prepare_weights(layer):
             layer.moe_op.w13_list[index].set_scale_inv_fp8(
                 layer.moe_op.w13_list[index].scale_inv_fp8.reshape(2,1).repeat(1,layer.w13_weight.shape[1]//2).flatten().clone()
             )
-    if hasattr(layer.moe_op, "w13_weight_scale") and os.getenv("QUANT_CONFIG", None) is None:
+    if (
+        hasattr(layer.moe_op, "w13_weight_scale") and 
+        os.getenv("QUANT_CONFIG", None) is None and # skip INC fp8 path
+        getattr(layer, "w13_input_scale", None) is not None # skip dynamic quant fp8 path
+    ):
         _, _, hidden_size = layer.w13_weight.shape
         layer.moe_op.w13_weight = layer.w13_weight.reshape(-1, hidden_size).contiguous()
-        layer.moe_op.w2_weight = layer.w2_weight.transpose(-1, -2).contiguous()
+        layer.moe_op.w2_weight = layer.w2_weight.transpose(-1, -2).contiguous() # this contiguous will increase memory but gain performance
         layer.moe_op.w13_weight_scale = torch.cat([layer.w13_weight_scale[i].unsqueeze(0) for i in range(layer.moe_op.num_experts)], dim = 0).reshape(-1)
         layer.moe_op.w2_weight_scale = torch.cat([layer.w2_weight_scale[i].unsqueeze(0) for i in range(layer.moe_op.num_experts)], dim = 0).unsqueeze(1)          
     if hasattr(layer, "w13_input_scale"):
